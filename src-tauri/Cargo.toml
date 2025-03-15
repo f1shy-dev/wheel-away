@@ -31,4 +31,7 @@ env_logger = "0.10"
 fast_image_resize = { version = "5.1.2", features = ["rayon"] }
 jpeg-encoder = "0.6.0"
 base64-simd = "0.8.0"
+serialport = "4.7.0"
+lazy_static = "1.5.0"
+tauri-plugin-http = "2"
 

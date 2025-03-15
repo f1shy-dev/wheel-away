@@ -13,8 +13,9 @@
     "windows": [
       {
         "title": "wheel-away",
-        "width": 800,
-        "height": 600
+        "width": 420,
+        "height": 580,
+        "resizable": false
       }
     ],
     "security": {

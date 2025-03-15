@@ -7,10 +7,17 @@ use jpeg_encoder::{ColorType, Encoder as JpegEncoder};
 use log::{debug, error, info};
 use mouse_position::mouse_position::Mouse;
 use serde::{Deserialize, Serialize};
-use std::io::Cursor;
+use serialport::{SerialPort, SerialPortInfo, SerialPortType};
+use std::io::{Cursor, Write};
 use std::num::NonZeroU32;
-use std::time::Instant;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 use xcap::Monitor;
+
+// Global serial port connection
+lazy_static::lazy_static! {
+    static ref SERIAL_CONNECTION: Arc<Mutex<Option<Box<dyn SerialPort>>>> = Arc::new(Mutex::new(None));
+}
 
 #[derive(Serialize, Deserialize)]
 struct MousePosition {
@@ -23,6 +30,12 @@ struct ScreenCapture {
     data: String,
     width: u32,
     height: u32,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct SerialPortDetails {
+    port_name: String,
+    port_type: String,
 }
 
 #[tauri::command]
@@ -43,6 +56,127 @@ fn get_mouse_position() -> Result<MousePosition, String> {
         Mouse::Error => {
             error!("Failed to get mouse position");
             Err("Error getting mouse position".to_string())
+        }
+    }
+}
+
+#[tauri::command]
+fn list_serial_ports() -> Result<Vec<SerialPortDetails>, String> {
+    info!("Listing available serial ports");
+
+    match serialport::available_ports() {
+        Ok(ports) => {
+            let port_details = ports
+                .into_iter()
+                .map(|port| {
+                    let port_type = match port.port_type {
+                        SerialPortType::UsbPort(_) => "USB".to_string(),
+                        SerialPortType::BluetoothPort => "Bluetooth".to_string(),
+                        SerialPortType::PciPort => "PCI".to_string(),
+                        SerialPortType::Unknown => "Unknown".to_string(),
+                    };
+
+                    SerialPortDetails {
+                        port_name: port.port_name,
+                        port_type,
+                    }
+                })
+                .collect();
+
+            Ok(port_details)
+        }
+        Err(e) => {
+            error!("Failed to list serial ports: {}", e);
+            Err(format!("Failed to list serial ports: {}", e))
+        }
+    }
+}
+
+#[tauri::command]
+fn connect_to_arduino(port_name: &str) -> Result<String, String> {
+    info!("Connecting to Arduino on port: {}", port_name);
+
+    // Try to open the serial port
+    match serialport::new(port_name, 9600)
+        .timeout(Duration::from_millis(1000))
+        .open()
+    {
+        Ok(port) => {
+            // Store the connection in the global variable
+            let mut serial_connection = SERIAL_CONNECTION.lock().unwrap();
+            *serial_connection = Some(port);
+
+            info!("Successfully connected to Arduino on port: {}", port_name);
+            Ok(format!("Connected to {}", port_name))
+        }
+        Err(e) => {
+            error!("Failed to connect to Arduino: {}", e);
+            Err(format!("Failed to connect to Arduino: {}", e))
+        }
+    }
+}
+
+#[tauri::command]
+fn disconnect_arduino() -> Result<String, String> {
+    info!("Disconnecting from Arduino");
+
+    let mut serial_connection = SERIAL_CONNECTION.lock().unwrap();
+    *serial_connection = None;
+
+    info!("Arduino disconnected");
+    Ok("Arduino disconnected".to_string())
+}
+
+#[tauri::command]
+fn send_arduino_command(command: &str) -> Result<String, String> {
+    info!("Sending command to Arduino: {}", command);
+
+    let mut serial_connection = SERIAL_CONNECTION.lock().unwrap();
+
+    match &mut *serial_connection {
+        Some(port) => {
+            // Send the command with a newline
+            let command_with_newline = format!("{}\n", command);
+            match port.write(command_with_newline.as_bytes()) {
+                Ok(_) => {
+                    info!("Command sent successfully");
+
+                    // Read the response
+                    let mut response = String::new();
+                    let mut buffer = [0u8; 100];
+
+                    // Wait a bit for Arduino to process and respond
+                    std::thread::sleep(Duration::from_millis(100));
+
+                    // Read available data
+                    match port.read(&mut buffer) {
+                        Ok(bytes_read) => {
+                            if bytes_read > 0 {
+                                response =
+                                    String::from_utf8_lossy(&buffer[0..bytes_read]).to_string();
+                                info!("Received response: {}", response);
+                            } else {
+                                info!("No response received");
+                                response = "No response".to_string();
+                            }
+                        }
+                        Err(e) => {
+                            info!("Error reading response: {}", e);
+                            response = "Error reading response".to_string();
+                        }
+                    }
+
+                    Ok(response)
+                }
+                Err(e) => {
+                    error!("Failed to send command: {}", e);
+                    Err(format!("Failed to send command: {}", e))
+                }
+            }
+        }
+        None => {
+            error!("No Arduino connected");
+            Err("No Arduino connected".to_string())
         }
     }
 }
@@ -228,11 +362,16 @@ pub fn run() {
     info!("Starting Wheel Away application");
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             greet,
             get_mouse_position,
-            capture_screen
+            capture_screen,
+            list_serial_ports,
+            connect_to_arduino,
+            disconnect_arduino,
+            send_arduino_command
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
