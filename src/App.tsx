@@ -80,7 +80,7 @@ function App() {
       
       // Convert the base64 data to a Blob
       console.log("Converting base64 to blob");
-      const base64Data = capture.data.replace(/^data:image\/png;base64,/, "");
+      const base64Data = capture.data.replace(/^data:image\/jpeg;base64,/, "");
       console.log("Base64 data length (after stripping prefix):", base64Data.length);
       
       const byteCharacters = atob(base64Data);
@@ -102,7 +102,7 @@ function App() {
       
       console.log("Created byte arrays:", byteArrays.length);
       
-      const blob = new Blob(byteArrays, { type: "image/png" });
+      const blob = new Blob(byteArrays, { type: "image/jpeg" });
       console.log("Created blob, size:", blob.size);
       
       const blobUrl = URL.createObjectURL(blob);
